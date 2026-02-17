@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ping Endpoint Monitor</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f9fc;
+      --surface: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --line: #d8e0ec;
+      --accent: #0f766e;
+      --accent-strong: #115e59;
+      --danger: #be123c;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(170deg, #f5f9ff 0%, #f6f8fb 45%, #eef5f2 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 24px 16px 36px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 1.7rem;
+    }
+
+    .subtitle {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+    }
+
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr 120px 130px 130px 130px;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    input,
+    select,
+    button {
+      min-height: 38px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.94rem;
+      background: #fff;
+      color: var(--text);
+    }
+
+    input:focus,
+    select:focus {
+      outline: 2px solid #99f6e4;
+      outline-offset: 1px;
+      border-color: #2dd4bf;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    #toggleButton {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    #toggleButton:hover {
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
+
+    .danger {
+      border-color: #fecdd3;
+      color: var(--danger);
+      background: #fff1f2;
+      font-weight: 600;
+    }
+
+    .status {
+      margin-left: auto;
+      font-size: 0.88rem;
+      color: var(--muted);
+      align-self: center;
+    }
+
+    .stats-wrap {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+      font-size: 0.94rem;
+    }
+
+    td,
+    th {
+      border-bottom: 1px solid #eef2f7;
+      padding: 7px 8px;
+      text-align: right;
+    }
+
+    th {
+      text-align: left;
+      color: #334155;
+      width: 58%;
+      font-weight: 600;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.88rem;
+    }
+
+    #pings {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      max-height: 360px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    #pings li {
+      border-bottom: 1px solid #f1f5f9;
+      padding: 4px 8px;
+      white-space: pre;
+      line-height: 1.25rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #pings li:last-child {
+      border-bottom: 0;
+    }
+
+    .legend {
+      margin-top: 8px;
+      color: #64748b;
+      font-size: 0.8rem;
+    }
+
+    @media (max-width: 860px) {
+      .controls-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .stats-wrap {
+        grid-template-columns: 1fr;
+      }
+
+      .status {
+        width: 100%;
+        margin-left: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Ping Endpoint Monitor</h1>
+    <p class="subtitle">Browser-only HTTP ping monitor. Keep this tab open for live connection health and latency stats.</p>
+
+    <div class="panel">
+      <div class="controls-grid">
+        <div class="field">
+          <label for="endpointInput">Endpoint URL</label>
+          <input id="endpointInput" type="url" placeholder="https://example.com/ping">
+        </div>
+        <div class="field">
+          <label for="methodSelect">Method</label>
+          <select id="methodSelect">
+            <option value="GET" selected>GET</option>
+            <option value="HEAD">HEAD</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="intervalInput">Interval (ms)</label>
+          <input id="intervalInput" type="number" min="0" value="250">
+        </div>
+        <div class="field">
+          <label for="timeoutInput">Timeout (ms)</label>
+          <input id="timeoutInput" type="number" min="100" value="4000">
+        </div>
+        <div class="field">
+          <label for="entriesInput">Recent Samples</label>
+          <input id="entriesInput" type="number" min="10" max="1000" value="75">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="toggleButton" type="button">Start</button>
+        <button id="resetButton" class="danger" type="button">Reset Stats</button>
+        <div id="statusText" class="status">Idle</div>
+      </div>
+
+      <div class="stats-wrap">
+        <table>
+          <tr>
+            <th>Pings</th>
+            <td id="ping_count">0</td>
+          </tr>
+          <tr>
+            <th>Failed Pings</th>
+            <td id="failed_pings">0</td>
+          </tr>
+          <tr>
+            <th>Last Ping</th>
+            <td><span id="last_ping">~</span> ms</td>
+          </tr>
+          <tr>
+            <th>Recent Average</th>
+            <td><span id="recent_avg">~</span> ms</td>
+          </tr>
+          <tr>
+            <th>Recent Low</th>
+            <td><span id="recent_low">~</span> ms</td>
+          </tr>
+          <tr>
+            <th>Recent High</th>
+            <td><span id="recent_high">~</span> ms</td>
+          </tr>
+          <tr>
+            <th>Session Low</th>
+            <td><span id="session_low">~</span> ms</td>
+          </tr>
+          <tr>
+            <th>Session High</th>
+            <td><span id="session_high">~</span> ms</td>
+          </tr>
+        </table>
+
+        <table>
+          <tr>
+            <th>Online</th>
+            <td id="conn_online">~</td>
+          </tr>
+          <tr>
+            <th>Connection Type</th>
+            <td id="conn_type" class="mono">n/a</td>
+          </tr>
+          <tr>
+            <th>Effective Type</th>
+            <td id="conn_effective" class="mono">n/a</td>
+          </tr>
+          <tr>
+            <th>Downlink</th>
+            <td id="conn_downlink">n/a</td>
+          </tr>
+          <tr>
+            <th>Browser RTT</th>
+            <td id="conn_rtt">n/a</td>
+          </tr>
+          <tr>
+            <th>Save Data</th>
+            <td id="conn_save_data">n/a</td>
+          </tr>
+          <tr>
+            <th>Last Result</th>
+            <td id="last_result" class="mono">~</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+
+    <div style="margin-top: 14px">
+      <ul id="pings" class="mono">
+        <li>Ready.</li>
+      </ul>
+      <div class="legend">Green is faster, red is slower. Browser ping uses HTTP fetch round-trip time and requires CORS access to the endpoint.</div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const fullRedPingMs = 200;
+      const state = {
+        running: false,
+        totalPings: 0,
+        failedPings: 0,
+        sessionLow: null,
+        sessionHigh: null,
+        recentPings: [],
+        maxEntries: 75,
+        loopPromise: null,
+        abortController: null
+      };
+
+      const $ = (id) => document.getElementById(id);
+      const endpointInput = $("endpointInput");
+      const methodSelect = $("methodSelect");
+      const intervalInput = $("intervalInput");
+      const timeoutInput = $("timeoutInput");
+      const entriesInput = $("entriesInput");
+      const pingsList = $("pings");
+      const statusText = $("statusText");
+      const toggleButton = $("toggleButton");
+
+      const setText = (id, value) => {
+        $(id).textContent = value;
+      };
+
+      const fmt = (num) => Number(num).toFixed(1);
+
+      const updateConnectionInfo = () => {
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        setText("conn_online", navigator.onLine ? "yes" : "no");
+        setText("conn_type", conn?.type ?? "n/a");
+        setText("conn_effective", conn?.effectiveType ?? "n/a");
+        setText("conn_downlink", typeof conn?.downlink === "number" ? `${conn.downlink} Mbps` : "n/a");
+        setText("conn_rtt", typeof conn?.rtt === "number" ? `${conn.rtt} ms` : "n/a");
+        setText("conn_save_data", typeof conn?.saveData === "boolean" ? (conn.saveData ? "yes" : "no") : "n/a");
+      };
+
+      const resetStats = () => {
+        state.totalPings = 0;
+        state.failedPings = 0;
+        state.sessionLow = null;
+        state.sessionHigh = null;
+        state.recentPings = [];
+        setText("ping_count", "0");
+        setText("failed_pings", "0");
+        setText("last_ping", "~");
+        setText("recent_avg", "~");
+        setText("recent_low", "~");
+        setText("recent_high", "~");
+        setText("session_low", "~");
+        setText("session_high", "~");
+        setText("last_result", "~");
+        pingsList.innerHTML = "<li>Ready.</li>";
+      };
+
+      const toRgbHex = (value) => {
+        const safe = Math.max(0, Math.min(255, value));
+        const hex = safe.toString(16);
+        return hex.length === 1 ? `0${hex}` : hex;
+      };
+
+      const addLogLine = (latencyMs, ok, resultText) => {
+        const li = document.createElement("li");
+        const maxBar = 90;
+        const barLength = Math.max(1, Math.min(maxBar, Math.round(latencyMs / 2.5)));
+
+        if (ok) {
+          const bounded = Math.min(latencyMs, fullRedPingMs);
+          const red = Math.round((bounded / fullRedPingMs) * 255);
+          const green = 255 - red;
+          const lineColor = `#${toRgbHex(red)}00${toRgbHex(green)}`;
+          li.style.color = lineColor;
+          li.textContent = `${fmt(latencyMs).padStart(7)}ms ${"*".repeat(barLength)} (${resultText})`;
+        } else {
+          li.style.color = "#be123c";
+          li.textContent = `${fmt(latencyMs).padStart(7)}ms ${"!".repeat(Math.min(16, barLength))} (${resultText})`;
+        }
+
+        pingsList.prepend(li);
+        while (pingsList.children.length > state.maxEntries) {
+          pingsList.removeChild(pingsList.lastChild);
+        }
+      };
+
+      const refreshStats = (latencyMs, ok, resultText) => {
+        state.totalPings += 1;
+        if (!ok) {
+          state.failedPings += 1;
+        } else {
+          state.recentPings.push(latencyMs);
+          while (state.recentPings.length > state.maxEntries) {
+            state.recentPings.shift();
+          }
+
+          const recentLow = Math.min(...state.recentPings);
+          const recentHigh = Math.max(...state.recentPings);
+          const recentAvg = state.recentPings.reduce((sum, v) => sum + v, 0) / state.recentPings.length;
+          state.sessionLow = state.sessionLow == null ? recentLow : Math.min(state.sessionLow, recentLow);
+          state.sessionHigh = state.sessionHigh == null ? recentHigh : Math.max(state.sessionHigh, recentHigh);
+
+          setText("last_ping", fmt(latencyMs));
+          setText("recent_avg", fmt(recentAvg));
+          setText("recent_low", fmt(recentLow));
+          setText("recent_high", fmt(recentHigh));
+          setText("session_low", fmt(state.sessionLow));
+          setText("session_high", fmt(state.sessionHigh));
+        }
+
+        setText("ping_count", String(state.totalPings));
+        setText("failed_pings", String(state.failedPings));
+        setText("last_result", resultText);
+        addLogLine(latencyMs, ok, resultText);
+      };
+
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      const withCacheBust = (url) => {
+        const parsed = new URL(url, window.location.href);
+        parsed.searchParams.set("_ts", Date.now().toString());
+        return parsed.toString();
+      };
+
+      const pingOnce = async () => {
+        const endpoint = endpointInput.value.trim();
+        const method = methodSelect.value;
+        const timeout = Math.max(100, Number(timeoutInput.value) || 4000);
+        const start = performance.now();
+        let resultText = "";
+        if (!endpoint) {
+          refreshStats(0, false, "endpoint required");
+          return;
+        }
+
+        state.abortController = new AbortController();
+        const timeoutId = setTimeout(() => {
+          state.abortController?.abort();
+        }, timeout);
+
+        try {
+          const response = await fetch(withCacheBust(endpoint), {
+            method,
+            cache: "no-store",
+            mode: "cors",
+            credentials: "omit",
+            signal: state.abortController.signal
+          });
+          const duration = performance.now() - start;
+          resultText = `HTTP ${response.status}`;
+          refreshStats(duration, true, resultText);
+        } catch (err) {
+          const duration = performance.now() - start;
+          if (!state.running && err?.name === "AbortError") {
+            return;
+          }
+          if (err?.name === "AbortError") {
+            resultText = "timeout";
+          } else if (err instanceof Error && err.message) {
+            resultText = err.message;
+          } else {
+            resultText = "request failed";
+          }
+          refreshStats(duration, false, resultText);
+        } finally {
+          clearTimeout(timeoutId);
+          state.abortController = null;
+        }
+      };
+
+      const setRunningUi = (running) => {
+        toggleButton.textContent = running ? "Stop" : "Start";
+        statusText.textContent = running ? "Running" : "Idle";
+        endpointInput.disabled = running;
+        methodSelect.disabled = running;
+        intervalInput.disabled = running;
+        timeoutInput.disabled = running;
+        entriesInput.disabled = running;
+      };
+
+      const runLoop = async () => {
+        const intervalMs = Math.max(0, Number(intervalInput.value) || 0);
+        while (state.running) {
+          try {
+            await pingOnce();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "unexpected error";
+            refreshStats(0, false, message);
+            statusText.textContent = `Error: ${message}`;
+            state.running = false;
+            break;
+          }
+          if (!state.running) {
+            break;
+          }
+          if (intervalMs > 0) {
+            await sleep(intervalMs);
+          }
+        }
+      };
+
+      const start = () => {
+        if (state.running) return;
+        state.maxEntries = Math.max(10, Math.min(1000, Number(entriesInput.value) || 75));
+        state.running = true;
+        setRunningUi(true);
+        statusText.textContent = "Running";
+        state.loopPromise = runLoop().finally(() => {
+          state.running = false;
+          setRunningUi(false);
+          state.loopPromise = null;
+        });
+      };
+
+      const stop = () => {
+        state.running = false;
+        state.abortController?.abort();
+        statusText.textContent = "Stopping...";
+      };
+
+      const initialEndpoint = (() => {
+        try {
+          if (window.location.protocol.startsWith("http")) {
+            return `${window.location.origin}/ping`;
+          }
+        } catch (_) {
+          // Ignore URL parsing edge cases.
+        }
+        return "";
+      })();
+
+      endpointInput.value = initialEndpoint;
+      updateConnectionInfo();
+      window.addEventListener("online", updateConnectionInfo);
+      window.addEventListener("offline", updateConnectionInfo);
+      const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      conn?.addEventListener?.("change", updateConnectionInfo);
+
+      toggleButton.addEventListener("click", () => {
+        if (state.running) {
+          stop();
+        } else {
+          start();
+        }
+      });
+
+      $("resetButton").addEventListener("click", resetStats);
+    })();
+  </script>
+</body>
+</html>
