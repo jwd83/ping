@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ping Endpoint Monitor</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <style>
     :root {
       color-scheme: light;
@@ -127,6 +128,80 @@
       align-self: center;
     }
 
+    .chart-panel {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbfd 100%);
+      padding: 10px 10px 12px;
+    }
+
+    .chart-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .chart-title {
+      font-size: 0.9rem;
+      color: #334155;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .chart-scale {
+      color: #64748b;
+      font-size: 0.8rem;
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      gap: 10px;
+    }
+
+    .chart-wrap {
+      border: 1px solid #e2e8f0;
+      border-radius: 9px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    #latencyChart {
+      display: block;
+      width: 100%;
+      height: 230px;
+    }
+
+    .metric-grid {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 8px;
+    }
+
+    .metric {
+      border: 1px solid #d9e2ec;
+      border-radius: 9px;
+      background: #fff;
+      padding: 8px 10px;
+    }
+
+    .metric-label {
+      font-size: 0.74rem;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 2px;
+    }
+
+    .metric-value {
+      font-size: 1.02rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #0f172a;
+    }
+
     .stats-wrap {
       margin-top: 14px;
       display: grid;
@@ -194,6 +269,10 @@
         grid-template-columns: 1fr 1fr;
       }
 
+      .metric-grid {
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+      }
+
       .stats-wrap {
         grid-template-columns: 1fr;
       }
@@ -241,6 +320,38 @@
         <button id="toggleButton" type="button">Start</button>
         <button id="resetButton" class="danger" type="button">Reset Stats</button>
         <div id="statusText" class="status">Idle</div>
+      </div>
+
+      <div class="chart-panel">
+        <div class="chart-head">
+          <div class="chart-title">Realtime Latency</div>
+          <div class="chart-scale">
+            <span>Min: <span id="chart_min">0.0 ms</span></span>
+            <span>Max: <span id="chart_max">~</span></span>
+            <span>Latest: <span id="chart_latest">~</span></span>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="latencyChart"></canvas>
+        </div>
+        <div class="metric-grid">
+          <div class="metric">
+            <div class="metric-label">P50</div>
+            <div class="metric-value" id="metric_p50">~</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">P95</div>
+            <div class="metric-value" id="metric_p95">~</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Jitter (stddev)</div>
+            <div class="metric-value" id="metric_jitter">~</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Fail Rate</div>
+            <div class="metric-value" id="metric_fail_rate">~</div>
+          </div>
+        </div>
       </div>
 
       <div class="stats-wrap">
@@ -316,7 +427,7 @@
       <ul id="pings" class="mono">
         <li>Ready.</li>
       </ul>
-      <div class="legend">Green is faster, red is slower. Browser ping uses HTTP fetch round-trip time and requires CORS access to the endpoint.</div>
+      <div class="legend">Green is faster, red is slower, red dots mark failed requests, dashed line marks 200ms. Browser ping uses HTTP fetch round-trip time and requires CORS access.</div>
     </div>
   </div>
 
@@ -330,6 +441,8 @@
         sessionLow: null,
         sessionHigh: null,
         recentPings: [],
+        history: [],
+        chartHistoryCap: 500,
         maxEntries: 75,
         loopPromise: null,
         abortController: null
@@ -344,12 +457,168 @@
       const pingsList = $("pings");
       const statusText = $("statusText");
       const toggleButton = $("toggleButton");
+      const latencyChart = $("latencyChart");
+      const chartCtx = latencyChart.getContext("2d");
 
       const setText = (id, value) => {
         $(id).textContent = value;
       };
 
       const fmt = (num) => Number(num).toFixed(1);
+
+      const percentile = (values, pct) => {
+        if (values.length === 0) return null;
+        const sorted = [...values].sort((a, b) => a - b);
+        const idx = (sorted.length - 1) * pct;
+        const base = Math.floor(idx);
+        const rest = idx - base;
+        if (sorted[base + 1] != null) {
+          return sorted[base] + rest * (sorted[base + 1] - sorted[base]);
+        }
+        return sorted[base];
+      };
+
+      const stddev = (values) => {
+        if (values.length < 2) return null;
+        const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+        const variance = values.reduce((sum, v) => sum + ((v - mean) ** 2), 0) / values.length;
+        return Math.sqrt(variance);
+      };
+
+      const updateMetrics = () => {
+        const successful = state.history.filter((row) => row.ok).map((row) => row.latencyMs);
+        const recentSlice = successful.slice(-Math.min(successful.length, state.maxEntries));
+        const p50 = percentile(recentSlice, 0.5);
+        const p95 = percentile(recentSlice, 0.95);
+        const jitter = stddev(recentSlice);
+        const failRate = state.totalPings > 0 ? (state.failedPings / state.totalPings) * 100 : null;
+
+        setText("metric_p50", p50 == null ? "~" : `${fmt(p50)} ms`);
+        setText("metric_p95", p95 == null ? "~" : `${fmt(p95)} ms`);
+        setText("metric_jitter", jitter == null ? "~" : `${fmt(jitter)} ms`);
+        setText("metric_fail_rate", failRate == null ? "~" : `${fmt(failRate)}%`);
+      };
+
+      const resizeCanvas = () => {
+        const cssWidth = latencyChart.clientWidth;
+        const cssHeight = latencyChart.clientHeight;
+        const dpr = window.devicePixelRatio || 1;
+        const targetWidth = Math.floor(cssWidth * dpr);
+        const targetHeight = Math.floor(cssHeight * dpr);
+        if (latencyChart.width !== targetWidth || latencyChart.height !== targetHeight) {
+          latencyChart.width = targetWidth;
+          latencyChart.height = targetHeight;
+          chartCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+      };
+
+      const drawChart = () => {
+        resizeCanvas();
+        const width = latencyChart.clientWidth;
+        const height = latencyChart.clientHeight;
+        const padL = 38;
+        const padR = 10;
+        const padT = 8;
+        const padB = 22;
+        const plotW = Math.max(10, width - padL - padR);
+        const plotH = Math.max(10, height - padT - padB);
+        chartCtx.clearRect(0, 0, width, height);
+
+        chartCtx.fillStyle = "#f8fafc";
+        chartCtx.fillRect(0, 0, width, height);
+
+        const maxPoints = Math.max(20, Math.floor(plotW / 3));
+        const points = state.history.slice(-maxPoints);
+        const values = points.map((p) => p.latencyMs).filter((v) => Number.isFinite(v) && v >= 0);
+        const yMax = values.length
+          ? Math.max(80, fullRedPingMs, Math.ceil(Math.max(...values) * 1.25))
+          : 250;
+
+        setText("chart_min", "0.0 ms");
+        setText("chart_max", `${fmt(yMax)} ms`);
+        if (points.length > 0) {
+          const latest = points[points.length - 1];
+          setText("chart_latest", latest.ok ? `${fmt(latest.latencyMs)} ms` : `${fmt(latest.latencyMs)} ms (fail)`);
+        } else {
+          setText("chart_latest", "~");
+        }
+
+        chartCtx.strokeStyle = "#e2e8f0";
+        chartCtx.lineWidth = 1;
+        for (let i = 0; i <= 4; i += 1) {
+          const y = padT + (i / 4) * plotH;
+          chartCtx.beginPath();
+          chartCtx.moveTo(padL, y);
+          chartCtx.lineTo(padL + plotW, y);
+          chartCtx.stroke();
+        }
+
+        chartCtx.fillStyle = "#64748b";
+        chartCtx.font = "11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+        chartCtx.textAlign = "right";
+        chartCtx.textBaseline = "middle";
+        for (let i = 0; i <= 4; i += 1) {
+          const value = yMax - (i / 4) * yMax;
+          const y = padT + (i / 4) * plotH;
+          chartCtx.fillText(`${Math.round(value)}ms`, padL - 6, y);
+        }
+
+        const thresholdY = padT + (1 - Math.min(1, fullRedPingMs / yMax)) * plotH;
+        chartCtx.strokeStyle = "rgba(190, 18, 60, 0.35)";
+        chartCtx.setLineDash([4, 4]);
+        chartCtx.beginPath();
+        chartCtx.moveTo(padL, thresholdY);
+        chartCtx.lineTo(padL + plotW, thresholdY);
+        chartCtx.stroke();
+        chartCtx.setLineDash([]);
+
+        if (points.length < 2) {
+          chartCtx.fillStyle = "#94a3b8";
+          chartCtx.font = "12px ui-sans-serif, sans-serif";
+          chartCtx.textAlign = "center";
+          chartCtx.textBaseline = "middle";
+          chartCtx.fillText("Waiting for samples...", padL + (plotW / 2), padT + (plotH / 2));
+          return;
+        }
+
+        const coords = points.map((pt, i) => {
+          const x = padL + (i / (points.length - 1)) * plotW;
+          const y = padT + (1 - Math.min(1, pt.latencyMs / yMax)) * plotH;
+          return { x, y, ok: pt.ok };
+        });
+
+        const area = chartCtx.createLinearGradient(0, padT, 0, padT + plotH);
+        area.addColorStop(0, "rgba(15, 118, 110, 0.30)");
+        area.addColorStop(1, "rgba(15, 118, 110, 0.02)");
+
+        chartCtx.fillStyle = area;
+        chartCtx.beginPath();
+        chartCtx.moveTo(coords[0].x, padT + plotH);
+        for (const point of coords) {
+          chartCtx.lineTo(point.x, point.y);
+        }
+        chartCtx.lineTo(coords[coords.length - 1].x, padT + plotH);
+        chartCtx.closePath();
+        chartCtx.fill();
+
+        chartCtx.strokeStyle = "#0f766e";
+        chartCtx.lineWidth = 2;
+        chartCtx.beginPath();
+        chartCtx.moveTo(coords[0].x, coords[0].y);
+        for (let i = 1; i < coords.length; i += 1) {
+          chartCtx.lineTo(coords[i].x, coords[i].y);
+        }
+        chartCtx.stroke();
+
+        for (const point of coords) {
+          if (!point.ok) {
+            chartCtx.fillStyle = "#be123c";
+            chartCtx.beginPath();
+            chartCtx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
+            chartCtx.fill();
+          }
+        }
+      };
 
       const updateConnectionInfo = () => {
         const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
@@ -367,6 +636,7 @@
         state.sessionLow = null;
         state.sessionHigh = null;
         state.recentPings = [];
+        state.history = [];
         setText("ping_count", "0");
         setText("failed_pings", "0");
         setText("last_ping", "~");
@@ -377,6 +647,8 @@
         setText("session_high", "~");
         setText("last_result", "~");
         pingsList.innerHTML = "<li>Ready.</li>";
+        updateMetrics();
+        drawChart();
       };
 
       const toRgbHex = (value) => {
@@ -410,6 +682,14 @@
 
       const refreshStats = (latencyMs, ok, resultText) => {
         state.totalPings += 1;
+        state.history.push({
+          latencyMs,
+          ok,
+          at: Date.now()
+        });
+        while (state.history.length > state.chartHistoryCap) {
+          state.history.shift();
+        }
         if (!ok) {
           state.failedPings += 1;
         } else {
@@ -435,6 +715,8 @@
         setText("ping_count", String(state.totalPings));
         setText("failed_pings", String(state.failedPings));
         setText("last_result", resultText);
+        updateMetrics();
+        drawChart();
         addLogLine(latencyMs, ok, resultText);
       };
 
@@ -557,6 +839,7 @@
       updateConnectionInfo();
       window.addEventListener("online", updateConnectionInfo);
       window.addEventListener("offline", updateConnectionInfo);
+      window.addEventListener("resize", drawChart);
       const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
       conn?.addEventListener?.("change", updateConnectionInfo);
 
@@ -569,6 +852,13 @@
       });
 
       $("resetButton").addEventListener("click", resetStats);
+      entriesInput.addEventListener("change", () => {
+        state.maxEntries = Math.max(10, Math.min(1000, Number(entriesInput.value) || 75));
+        updateMetrics();
+        drawChart();
+      });
+      updateMetrics();
+      drawChart();
     })();
   </script>
 </body>

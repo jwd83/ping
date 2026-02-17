@@ -25,6 +25,8 @@ The app continuously sends HTTP requests and shows:
 - total + failed pings
 - recent avg/low/high
 - session low/high
+- realtime latency chart with failure markers + 200ms threshold line
+- P50/P95/jitter/failure-rate metric cards
 - live colored latency stream
 - browser connection details (`navigator.connection`, when available)
 
